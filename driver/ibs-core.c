@@ -325,29 +325,30 @@ static struct notifier_block ibs_class_cpu_notifier = {
 };
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)
-static char *ibs_devnode(struct device *dev, 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,3,0)
-umode_t *mode
+// TODO: Version?
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+static char* ibs_devnode(const struct device *dev, umode_t *mode)
 #else
-mode_t *mode
+static char* ibs_devnode(struct device *dev, mode_t *mode)
 #endif
-)
 {
 	int minor = MINOR(dev->devt);
 
 	return kasprintf(GFP_KERNEL, "cpu/%u/ibs/%s", IBS_CPU(minor),
 			IBS_FLAVOR(minor) == IBS_OP ? "op" : "fetch");
 }
-#endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24)
+// TODO: Version
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+static int ibs_uevent(const struct device *dev, struct kobj_uevent_env *env)
+#else
 static int ibs_uevent(struct device *dev, struct kobj_uevent_env *env)
+#endif
 {
 	add_uevent_var(env, "DEVMODE=%#o", 0666);
 	return 0;
 }
-#endif
+
 
 static int check_for_ibs_support(void)
 {
@@ -467,7 +468,11 @@ static void destroy_ibs_devices(void)
 
 static void destroy_ibs_hotplug(void)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,14,21)
+	cpus_read_lock();
+	cpuhp_remove_state(ibs_hotplug_notifier);
+	cpus_read_unlock();
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
 	get_online_cpus();
 	cpuhp_remove_state(ibs_hotplug_notifier);
 	put_online_cpus();
@@ -562,8 +567,11 @@ err_buffers:
 		pr_err("Failed to get IBS device number; exiting\n");
 		goto out_buffers;
 	}
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,4,0)
+	ibs_class = class_create("ibs");
+#else
 	ibs_class = class_create(THIS_MODULE, "ibs");
+#endif
 	if (IS_ERR(ibs_class)) {
 		err = PTR_ERR(ibs_class);
 		pr_err("Failed to create IBS class; exiting\n");
@@ -579,7 +587,9 @@ err_buffers:
 	/* Kernel versions older than 4.10 require some in-kernel locking
 	   around registering the hotplug notifier, or they could deadlock.
 	   See: https://patchwork.kernel.org/patch/3805711/ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,14,21)
+	cpus_read_lock();
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
 	/* 4.10 says just to use get_online_cpus()s, see the Dec. 2016 version
 	  https://www.kernel.org/doc/html/v4.11/core-api/cpu_hotplug.html */
 	get_online_cpus();
@@ -597,7 +607,13 @@ err_buffers:
 #endif
 
 /* Set up the devices and the hotplug notifiers. */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5,14,21)
+	ibs_hotplug_notifier = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN,
+			"cpu/ibs:online", ibs_online_up, ibs_prepare_down);
+	if (ibs_hotplug_notifier < 0)
+		goto out_chrdev;
+	cpus_read_lock();
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
 	/* Once we have cpuhp_setup_state(), this will also create the device
 	   because ibs_online_up is called per device. */
 	/* We currently set up everything on CPUHP_AP_ONLINE_DYN because it's

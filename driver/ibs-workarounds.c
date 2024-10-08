@@ -23,6 +23,7 @@
 #include "ibs-structs.h"
 #include "ibs-uapi.h"
 #include "ibs-msr-index.h"
+#include "ibs-workarounds.h"
 
 #ifndef topology_sibling_cpumask
 #define topology_sibling_cpumask(cpu) (per_cpu(cpu_sibling_map, cpu))
