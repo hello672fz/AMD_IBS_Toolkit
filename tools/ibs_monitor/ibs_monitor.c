@@ -622,25 +622,25 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     if (cpid == 0) {    /* Child process */
-
-        if (global_work_dir != NULL)
-        {
-            int err_chk = chdir(global_work_dir);
-            if (err_chk != 0)
-            {
-                fprintf(stderr, "Unable to change working directory to: %s\n",
-                    global_work_dir);
-                fprintf(stderr, "    %s\n", strerror(errno));
-                exit(EXIT_FAILURE);
-            }
-        }
-        extern char **environ;
-        char ** environ_to_use;
-        if (ld_debug_out != NULL)
-            environ_to_use = update_environment();
-        else
-            environ_to_use = environ;
         sleep(duration_time);
+        // if (global_work_dir != NULL)
+        // {
+        //     int err_chk = chdir(global_work_dir);
+        //     if (err_chk != 0)
+        //     {
+        //         fprintf(stderr, "Unable to change working directory to: %s\n",
+        //             global_work_dir);
+        //         fprintf(stderr, "    %s\n", strerror(errno));
+        //         exit(EXIT_FAILURE);
+        //     }
+        // }
+        // extern char **environ;
+        // char ** environ_to_use;
+        // if (ld_debug_out != NULL)
+        //     environ_to_use = update_environment();
+        // else
+        //     environ_to_use = environ;
+
 // #if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 11)
 //         if (execvpe(argv[0], &argv[0], environ_to_use) == -1) {
 //             fprintf(stderr, "Unable to execute application: %s\n", argv[0]);
