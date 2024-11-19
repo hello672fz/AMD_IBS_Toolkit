@@ -63,8 +63,12 @@ char *global_buffer = NULL;
 int poll_percent = 0;
 int poll_size = 0;
 int poll_timeout = 0;
+long long duration_time = 0;
 char *global_work_dir = NULL;
 char *ld_debug_out = NULL;
+
+// set cpu affinity
+int cpu_min = -1, cpu_max = -1;
 
 void set_global_defaults(void)
 {
@@ -74,6 +78,7 @@ void set_global_defaults(void)
     poll_percent = POLL_SIZE_PERCENT;
     poll_size = buffer_size * ((float)poll_percent / 100.);;
     poll_timeout = POLL_TIMEOUT;
+    duration_time = 1; // 10 seconds
 }
 
 void set_op_file(char *opt, FILE **opf, int *flavors)
@@ -109,6 +114,11 @@ void set_fetch_file(char *opt, FILE **fetchf, int *flavors)
 void set_working_dir(char *opt)
 {
     global_work_dir = opt;
+}
+
+void set_duration(long long duration_t)
+{
+    duration_time = duration_t;
 }
 
 void set_ld_debug_name(char *opt)
@@ -195,6 +205,17 @@ void set_global_poll_timeout(int in_poll_timeout)
     poll_timeout = in_poll_timeout;
 }
 
+void set_cpu_affinity(char *opt)
+{
+    if (sscanf(opt, "%d-%d", &cpu_min, &cpu_max) == 2) {
+        printf("cpu_min: %d, cpu_max: %d\n", cpu_min, cpu_max); // Output the parsed integers
+    } else if (sscanf(opt, "%d", &cpu_min) == 1){
+        cpu_max = cpu_min;
+    }else {
+        perror("Error: Unable to set cpu affinity.\n");
+    }
+}
+
 void parse_args(int argc, char *argv[], FILE **opf, FILE **fetchf, int *flavors)
 {
     static struct option longopts[] =
@@ -208,6 +229,8 @@ void parse_args(int argc, char *argv[], FILE **opf, FILE **fetchf, int *flavors)
         {"poll_percent", required_argument, NULL, 'p'},
         {"poll_timeout", required_argument, NULL, 't'},
         {"working_dir", required_argument, NULL, 'w'},
+        {"duration_time", required_argument, NULL, 'd'},
+        {"cpu_affinity", required_argument, NULL, 'c'},
         {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
@@ -219,7 +242,7 @@ void parse_args(int argc, char *argv[], FILE **opf, FILE **fetchf, int *flavors)
     }
 
     char c;
-    while ((c = getopt_long(argc, argv, "+ho:f:l:r:s:b:p:t:w:", longopts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "+ho:f:l:r:s:b:p:t:w:d:c:", longopts, NULL)) != -1)
     {
         switch (c) {
             case 'h':
@@ -248,6 +271,10 @@ void parse_args(int argc, char *argv[], FILE **opf, FILE **fetchf, int *flavors)
                 fprintf(stderr, "       How full the in-kernel buffer should be before reading it, in %%. Defaults to 75%%\n");
                 fprintf(stderr, "--poll_timeout (or -t) {# ms}:\n");
                 fprintf(stderr, "       How long to wait on the driver before reading a non-full buffer, in ms. Defaults to 1000 ms\n");
+                fprintf(stderr, "--duration_time (or -d) {# ms}:\n");
+                fprintf(stderr, "       How long to monitor, in s. Defaults to 1 s\n");
+                fprintf(stderr, "--cpu_affinity (or -c) {# core1-core2}:\n");
+                fprintf(stderr, "       Set cpu affinity.\n");
                 exit(EXIT_SUCCESS);
             case 'o':
                 set_op_file(optarg, opf, flavors);
@@ -275,6 +302,12 @@ void parse_args(int argc, char *argv[], FILE **opf, FILE **fetchf, int *flavors)
                 break;
             case 'w':
                 set_working_dir(optarg);
+                break;
+            case 'd':
+                set_duration(atoll(optarg));
+                break;
+            case 'c':
+                set_cpu_affinity(optarg);
                 break;
             case '?':
             default:
@@ -573,6 +606,12 @@ int main(int argc, char *argv[])
     global_buffer = malloc(buffer_size);
 
     int num_cpus = get_nprocs_conf();
+
+    if(cpu_min == -1)
+        cpu_min = 0;
+    if(cpu_max == -1)
+        cpu_max = num_cpus;
+
     // Add enough space for fetch and op FDs for every core.
     fds = calloc(num_cpus*2, sizeof(struct pollfd));
     enable_ibs_flavors(fds, &nopfds, &nfetchfds, flavors);
@@ -583,6 +622,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     if (cpid == 0) {    /* Child process */
+
         if (global_work_dir != NULL)
         {
             int err_chk = chdir(global_work_dir);
@@ -600,20 +640,21 @@ int main(int argc, char *argv[])
             environ_to_use = update_environment();
         else
             environ_to_use = environ;
-#if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 11)
-        if (execvpe(argv[0], &argv[0], environ_to_use) == -1) {
-            fprintf(stderr, "Unable to execute application: %s\n", argv[0]);
-            fprintf(stderr, "    %s\n", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-#else
-        environ = environ_to_use;
-        if (execvp(argv[0], &argv[0]) == -1) {
-            fprintf(stderr, "Unable to execute application: %s\n", argv[0]);
-            fprintf(stderr, "    %s\n", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-#endif
+        sleep(duration_time);
+// #if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 11)
+//         if (execvpe(argv[0], &argv[0], environ_to_use) == -1) {
+//             fprintf(stderr, "Unable to execute application: %s\n", argv[0]);
+//             fprintf(stderr, "    %s\n", strerror(errno));
+//             exit(EXIT_FAILURE);
+//         }
+// #else
+//         environ = environ_to_use;
+//         if (execvp(argv[0], &argv[0]) == -1) {
+//             fprintf(stderr, "Unable to execute application: %s\n", argv[0]);
+//             fprintf(stderr, "    %s\n", strerror(errno));
+//             exit(EXIT_FAILURE);
+//         }
+// #endif
         exit(EXIT_SUCCESS);
     }
 
@@ -664,7 +705,8 @@ static int fill_out_online_cores(int num_cpus, int num_online_cpus,
     {
         for (int i = 0; i < num_cpus; i++)
         {
-            cpu_list[i] = 1;
+            if(i >= cpu_min && i <= cpu_max)
+                cpu_list[i] = 1;
         }
         return num_online_cpus;
     }
@@ -703,7 +745,8 @@ static int fill_out_online_cores(int num_cpus, int num_online_cpus,
             for (int j = previous_cpu + 1; j < next_cpu; j++)
             {
                 num_online_seen++;
-                cpu_list[j] = 1;
+                if(i >= cpu_min && i <= cpu_max)
+                    cpu_list[j] = 1;
             }
             while(isdigit(online_cpus[i]))
                 i++;
@@ -715,7 +758,8 @@ static int fill_out_online_cores(int num_cpus, int num_online_cpus,
             if (cpu_num < num_cpus)
             {
                 num_online_seen++;
-                cpu_list[cpu_num] = 1;
+                if(i >= cpu_min && i <= cpu_max)
+                    cpu_list[cpu_num] = 1;
                 previous_cpu = cpu_num;
             }
             else
